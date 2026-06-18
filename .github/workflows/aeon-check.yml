@@ -1,0 +1,69 @@
+name: SPECTER Trust Check
+
+on:
+  workflow_dispatch:
+    inputs:
+      agent_address:
+        description: 'Ethereum address of agent to check'
+        required: true
+        type: string
+      min_score:
+        description: 'Minimum trust score required (0-100)'
+        required: false
+        default: '75'
+        type: string
+
+jobs:
+  trust-check:
+    runs-on: ubuntu-latest
+    name: Check agent reputation
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build
+        run: npm run build
+
+      - name: Run SPECTER trust check
+        env:
+          SPECTER_API_KEY: ${{ secrets.SPECTER_API_KEY }}
+          AGENT_ADDRESS: ${{ inputs.agent_address }}
+          MIN_SCORE: ${{ inputs.min_score }}
+        run: |
+          node --input-type=module <<'EOF'
+          import { SpecterMiddleware, formatCheckResult } from './dist/index.js';
+
+          const address = process.env.AGENT_ADDRESS;
+          const minScore = parseInt(process.env.MIN_SCORE ?? '75', 10);
+          const mock = !process.env.SPECTER_API_KEY;
+
+          const middleware = new SpecterMiddleware({
+            mock,
+            minScore,
+            apiKey: process.env.SPECTER_API_KEY,
+          });
+
+          const result = await middleware.check({ agentAddress: address });
+          console.log(formatCheckResult(result));
+
+          if (!result.allowed) {
+            console.error('\n::error::Trust gate BLOCKED — ' + result.reason);
+            process.exit(1);
+          }
+
+          console.log('\n::notice::Trust gate PASSED — score ' + result.score + '/100');
+          EOF
+
+      - name: Set output
+        if: always()
+        run: echo "Trust check completed"
